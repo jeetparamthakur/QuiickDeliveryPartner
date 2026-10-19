@@ -57,3 +57,9 @@ export type ShiftHistoryEntry = {
   deliveriesCompleted: number;
   earnings: number;
 };
+
+export type PartnerOnlineStatus = {
+  isOnline: boolean;
+  currentShiftStartedAt: string | null;
+  todayOnlineMinutes: number;
+};

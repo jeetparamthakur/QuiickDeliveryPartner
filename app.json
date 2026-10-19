@@ -16,7 +16,7 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.quiick.deliverypartner",
       "infoPlist": {
-        "UIBackgroundModes": ["location", "fetch"]
+        "UIBackgroundModes": ["location", "fetch", "remote-notification"]
       }
     },
     "android": {

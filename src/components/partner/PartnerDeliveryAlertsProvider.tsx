@@ -5,6 +5,7 @@ import {
   usePushNotifications,
 } from '@/hooks/useNotifications';
 import { usePartnerSessionStore } from '@/stores/partnerSessionStore';
+import { DeliveryRequestAlertModal } from '@/components/partner/DeliveryRequestAlertModal';
 
 /** Polls delivery requests while online and drives push + local pickup alerts app-wide. */
 export function PartnerDeliveryAlertsProvider() {
@@ -15,5 +16,5 @@ export function PartnerDeliveryAlertsProvider() {
   useDeliveryRequestNotifications(requestsQuery.data ?? [], isOnline);
   useDeliveryNotificationListeners(isOnline);
 
-  return null;
+  return <DeliveryRequestAlertModal enabled={isOnline} />;
 }

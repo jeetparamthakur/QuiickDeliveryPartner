@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, typography } from '@/theme';
+import { useTheme } from '@/context/ThemeContext';
 import { Button } from './Button';
 
 type Props = {
@@ -12,16 +12,27 @@ type Props = {
 };
 
 export function EmptyState({ icon = 'folder-open-outline', title, message, actionLabel, onAction }: Props) {
+  const { colors, spacing, typography, radius } = useTheme();
+
   return (
-    <View style={styles.container}>
-      <View style={styles.iconWrap}>
+    <View style={[styles.container, { padding: spacing.xxxl }]}>
+      <View
+        style={[
+          styles.iconWrap,
+          {
+            backgroundColor: colors.surfaceSecondary,
+            borderRadius: radius.full,
+            marginBottom: spacing.lg,
+          },
+        ]}
+      >
         <Ionicons name={icon} size={48} color={colors.textMuted} />
       </View>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.message}>{message}</Text>
-      {actionLabel && onAction && (
-        <Button title={actionLabel} onPress={onAction} style={styles.button} />
-      )}
+      <Text style={[typography.h3, { color: colors.text, textAlign: 'center', marginBottom: spacing.sm }]}>{title}</Text>
+      <Text style={[typography.bodySmall, { color: colors.textSecondary, textAlign: 'center' }]}>{message}</Text>
+      {actionLabel && onAction ? (
+        <Button title={actionLabel} onPress={onAction} style={{ marginTop: spacing.xl }} />
+      ) : null}
     </View>
   );
 }
@@ -31,18 +42,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: spacing.xxxl,
   },
   iconWrap: {
     width: 80,
     height: 80,
-    borderRadius: 40,
-    backgroundColor: colors.surfaceSecondary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.lg,
   },
-  title: { ...typography.h3, color: colors.text, textAlign: 'center', marginBottom: spacing.sm },
-  message: { ...typography.bodySmall, color: colors.textSecondary, textAlign: 'center' },
-  button: { marginTop: spacing.xl },
 });

@@ -1,7 +1,9 @@
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useDialogStore, type DialogActionStyle, type DialogVariant } from '@/stores/dialogStore';
-import { colors, radius, shadows, spacing, typography } from '@/theme';
+import { spacing, typography, radius } from '@/theme';
+import { useTheme } from '@/context/ThemeContext';
+import type { ThemeColors } from '@/theme';
 
 type VariantConfig = {
   icon: keyof typeof Ionicons.glyphMap;
@@ -10,59 +12,44 @@ type VariantConfig = {
   accent: string;
 };
 
-const variantConfig: Record<DialogVariant, VariantConfig> = {
-  default: {
-    icon: 'information-circle',
-    iconColor: colors.primary,
-    iconBg: colors.primaryLight,
-    accent: colors.primary,
-  },
-  success: {
-    icon: 'checkmark-circle',
-    iconColor: colors.success,
-    iconBg: colors.successLight,
-    accent: colors.success,
-  },
-  error: {
-    icon: 'close-circle',
-    iconColor: colors.danger,
-    iconBg: colors.dangerLight,
-    accent: colors.danger,
-  },
-  warning: {
-    icon: 'alert-circle',
-    iconColor: colors.warning,
-    iconBg: colors.warningLight,
-    accent: colors.warning,
-  },
-  destructive: {
-    icon: 'trash',
-    iconColor: colors.danger,
-    iconBg: colors.dangerLight,
-    accent: colors.danger,
-  },
-};
-
-function getActionStyles(style: DialogActionStyle | undefined, variant: DialogVariant) {
-  if (style === 'cancel') {
-    return {
-      container: styles.actionCancel,
-      text: styles.actionCancelText,
-    };
-  }
-  if (style === 'destructive') {
-    return {
-      container: styles.actionDestructive,
-      text: styles.actionPrimaryText,
-    };
-  }
+function getVariantConfig(colors: ThemeColors): Record<DialogVariant, VariantConfig> {
   return {
-    container: [styles.actionPrimary, { backgroundColor: variantConfig[variant].accent }],
-    text: styles.actionPrimaryText,
+    default: {
+      icon: 'information-circle',
+      iconColor: colors.primary,
+      iconBg: colors.primaryLight,
+      accent: colors.primary,
+    },
+    success: {
+      icon: 'checkmark-circle',
+      iconColor: colors.success,
+      iconBg: colors.successLight,
+      accent: colors.success,
+    },
+    error: {
+      icon: 'close-circle',
+      iconColor: colors.danger,
+      iconBg: colors.dangerLight,
+      accent: colors.danger,
+    },
+    warning: {
+      icon: 'alert-circle',
+      iconColor: colors.warning,
+      iconBg: colors.warningLight,
+      accent: colors.warning,
+    },
+    destructive: {
+      icon: 'trash',
+      iconColor: colors.danger,
+      iconBg: colors.dangerLight,
+      accent: colors.danger,
+    },
   };
 }
 
 export function AppDialogHost() {
+  const { colors, shadows } = useTheme();
+  const variantConfig = getVariantConfig(colors);
   const visible = useDialogStore((state) => state.visible);
   const options = useDialogStore((state) => state.options);
   const hide = useDialogStore((state) => state.hide);
@@ -73,6 +60,29 @@ export function AppDialogHost() {
   const config = variantConfig[variant];
   const actions = options.actions?.length ? options.actions : [{ text: 'OK', style: 'default' as const }];
   const stackedActions = actions.length > 2;
+
+  function getActionStyles(style: DialogActionStyle | undefined, v: DialogVariant) {
+    if (style === 'cancel') {
+      return {
+        container: {
+          backgroundColor: colors.surfaceSecondary,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        text: { color: colors.textSecondary },
+      };
+    }
+    if (style === 'destructive') {
+      return {
+        container: { backgroundColor: colors.danger },
+        text: { color: colors.white },
+      };
+    }
+    return {
+      container: { backgroundColor: variantConfig[v].accent },
+      text: { color: colors.white },
+    };
+  }
 
   function handleActionPress(onPress?: () => void) {
     hide();
@@ -88,25 +98,61 @@ export function AppDialogHost() {
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={hide}>
       <View style={styles.overlay}>
         <Pressable style={StyleSheet.absoluteFill} onPress={handleBackdropPress} />
-        <View style={styles.card}>
-          <View style={[styles.iconWrap, { backgroundColor: config.iconBg }]}>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.surface,
+              borderRadius: radius.xl,
+              ...shadows.lg,
+            },
+          ]}
+        >
+          <View style={[styles.iconWrap, { backgroundColor: config.iconBg, borderRadius: radius.full }]}>
             <Ionicons name={config.icon} size={30} color={config.iconColor} />
           </View>
 
-          <Text style={styles.title}>{options.title}</Text>
-          {!!options.message && <Text style={styles.message}>{options.message}</Text>}
+          <Text style={[typography.h3, { color: colors.text, textAlign: 'center', marginBottom: spacing.sm }]}>
+            {options.title}
+          </Text>
+          {!!options.message && (
+            <Text
+              style={[
+                typography.bodySmall,
+                {
+                  color: colors.textSecondary,
+                  textAlign: 'center',
+                  lineHeight: 22,
+                  marginBottom: spacing.xl,
+                },
+              ]}
+            >
+              {options.message}
+            </Text>
+          )}
 
-          <View style={[styles.actions, !options.message && styles.actionsNoMessage, stackedActions && styles.actionsStacked]}>
+          <View
+            style={[
+              styles.actions,
+              !options.message && { marginTop: spacing.sm },
+              stackedActions && styles.actionsStacked,
+            ]}
+          >
             {actions.map((action, index) => {
               const actionStyles = getActionStyles(action.style, variant);
               return (
                 <TouchableOpacity
                   key={`${action.text}-${index}`}
-                  style={[styles.actionBase, actionStyles.container, !stackedActions && styles.actionFlex]}
+                  style={[
+                    styles.actionBase,
+                    { borderRadius: radius.md },
+                    actionStyles.container,
+                    !stackedActions && styles.actionFlex,
+                  ]}
                   onPress={() => handleActionPress(action.onPress)}
                   activeOpacity={0.85}
                 >
-                  <Text style={[styles.actionText, actionStyles.text]}>{action.text}</Text>
+                  <Text style={[typography.button, actionStyles.text]}>{action.text}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -128,74 +174,33 @@ const styles = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.xxl,
     paddingBottom: spacing.xl,
     alignItems: 'center',
-    ...shadows.lg,
   },
   iconWrap: {
     width: 64,
     height: 64,
-    borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.lg,
-  },
-  title: {
-    ...typography.h3,
-    color: colors.text,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-  },
-  message: {
-    ...typography.bodySmall,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: spacing.xl,
   },
   actions: {
     flexDirection: 'row',
     gap: spacing.sm,
     width: '100%',
   },
-  actionsNoMessage: {
-    marginTop: spacing.sm,
-  },
   actionsStacked: {
     flexDirection: 'column',
   },
   actionBase: {
     minHeight: 48,
-    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
   },
   actionFlex: {
     flex: 1,
-  },
-  actionPrimary: {
-    backgroundColor: colors.primary,
-  },
-  actionDestructive: {
-    backgroundColor: colors.danger,
-  },
-  actionCancel: {
-    backgroundColor: colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  actionText: {
-    ...typography.button,
-  },
-  actionPrimaryText: {
-    color: colors.white,
-  },
-  actionCancelText: {
-    color: colors.textSecondary,
   },
 });

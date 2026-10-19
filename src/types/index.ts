@@ -22,9 +22,11 @@ export type {
   TripStep,
   ActiveTrip,
   DeliveryPartnerProfile,
+  PartnerOrdersTab,
+  PartnerOrder,
 } from './partner';
 
-export { VEHICLE_LABELS, TRIP_STEP_LABELS } from './partner';
+export { VEHICLE_LABELS, TRIP_STEP_LABELS, partnerOrderStatusLabel } from './partner';
 
 export type { NearbyStore, StorePartnerType } from './store';
 export type { NearbySeller } from './seller';

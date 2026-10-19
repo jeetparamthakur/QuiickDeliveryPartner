@@ -37,3 +37,35 @@ export function formatDuration(minutes: number): string {
   if (h === 0) return `${m}m`;
   return `${h}h ${m}m`;
 }
+
+const shiftTimeFormatter = new Intl.DateTimeFormat('en-IN', {
+  timeZone: 'Asia/Kolkata',
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true,
+});
+
+const shiftDateFormatter = new Intl.DateTimeFormat('en-IN', {
+  timeZone: 'Asia/Kolkata',
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+
+export function formatShiftTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return shiftTimeFormatter.format(date);
+}
+
+export function formatShiftRange(startedAt: string, endedAt: string): string {
+  const start = new Date(startedAt);
+  const end = new Date(endedAt);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return '—';
+  const sameDay =
+    shiftDateFormatter.format(start) === shiftDateFormatter.format(end);
+  if (sameDay) {
+    return `${shiftDateFormatter.format(start)} · ${formatShiftTime(startedAt)} – ${formatShiftTime(endedAt)}`;
+  }
+  return `${shiftDateFormatter.format(start)} ${formatShiftTime(startedAt)} – ${shiftDateFormatter.format(end)} ${formatShiftTime(endedAt)}`;
+}

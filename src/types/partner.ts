@@ -69,6 +69,43 @@ export type ActiveTrip = {
   step: TripStep;
 };
 
+export type RunStopKind = 'pickup' | 'drop';
+export type RunStopStatus = 'pending' | 'current' | 'done';
+
+export type RunStop = {
+  stopId: string;
+  assignmentIds: string[];
+  orderIds: string[];
+  orderNumbers: string[];
+  kind: RunStopKind;
+  status: RunStopStatus;
+  address: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type RunOrderSummary = {
+  assignmentId: string;
+  orderId: string;
+  orderNumber: string;
+  deliveryFee: number;
+  itemCount: number;
+  pickupDone: boolean;
+  deliveryDone: boolean;
+};
+
+export type ActiveDeliveryRun = {
+  runId: string;
+  createdAt: string;
+  currentStopIndex: number;
+  microStep: TripStep;
+  stopsRemaining: number;
+  totalDeliveryFee: number;
+  stops: RunStop[];
+  orders: RunOrderSummary[];
+  currentStop?: RunStop;
+};
+
 export type DeliveryPartnerProfile = {
   id: string;
   name: string;
@@ -94,3 +131,23 @@ export const TRIP_STEP_LABELS: Record<TripStep, string> = {
   confirm_delivery: 'Confirm delivery',
   completed: 'Completed',
 };
+
+export type PartnerOrdersTab = 'active' | 'delivered';
+
+export type PartnerOrder = DeliveryRequest & {
+  step?: TripStep;
+  completedAt?: string;
+};
+
+export function partnerOrderStatusLabel(order: PartnerOrder): string {
+  if (order.status === 'delivered') return 'Delivered';
+  if (order.step) return TRIP_STEP_LABELS[order.step];
+  switch (order.status) {
+    case 'picked_up':
+      return TRIP_STEP_LABELS.navigate_drop;
+    case 'accepted':
+      return TRIP_STEP_LABELS.navigate_pickup;
+    default:
+      return 'In delivery';
+  }
+}

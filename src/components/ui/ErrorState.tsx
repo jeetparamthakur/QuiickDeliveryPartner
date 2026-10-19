@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, typography } from '@/theme';
+import { useTheme } from '@/context/ThemeContext';
 import { Button } from './Button';
 
 type Props = {
@@ -17,20 +17,23 @@ const errorConfig = {
 };
 
 export function ErrorState({ title, message, onRetry, type = 'generic' }: Props) {
+  const { colors, spacing, typography } = useTheme();
   const config = errorConfig[type];
+
   return (
-    <View style={styles.container}>
-      <Ionicons name={config.icon} size={48} color={colors.danger} />
-      <Text style={styles.title}>{title ?? config.title}</Text>
-      <Text style={styles.message}>{message ?? config.message}</Text>
-      {onRetry && <Button title="Retry" onPress={onRetry} variant="secondary" style={styles.button} />}
+    <View style={[styles.container, { padding: spacing.xxxl }]}>
+      <Ionicons name={config.icon} size={48} color={colors.error} />
+      <Text style={[typography.h3, { color: colors.text, marginTop: spacing.lg, textAlign: 'center' }]}>
+        {title ?? config.title}
+      </Text>
+      <Text style={[typography.bodySmall, { color: colors.textSecondary, textAlign: 'center', marginTop: spacing.sm }]}>
+        {message ?? config.message}
+      </Text>
+      {onRetry ? <Button title="Retry" onPress={onRetry} variant="secondary" style={{ marginTop: spacing.xl }} /> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xxxl },
-  title: { ...typography.h3, color: colors.text, marginTop: spacing.lg, textAlign: 'center' },
-  message: { ...typography.bodySmall, color: colors.textSecondary, textAlign: 'center', marginTop: spacing.sm },
-  button: { marginTop: spacing.xl },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useContext } from 'react';
 import {
   View,
   ScrollView,
@@ -7,8 +7,12 @@ import {
   ViewStyle,
   Keyboard,
 } from 'react-native';
+import { BottomTabBarHeightContext } from 'expo-router/build/react-navigation/bottom-tabs/utils/BottomTabBarHeightContext';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing } from '@/theme';
+import { spacing } from '@/theme';
+import { useTheme } from '@/context/ThemeContext';
+
+export { useTabScreenInsets } from '@/hooks/useTabScreenInsets';
 
 const EXTRA_KEYBOARD_PADDING = spacing.xxl;
 
@@ -33,7 +37,9 @@ export function ScreenWrapper({
   style,
   edges = ['top'],
 }: Props) {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const shouldHandleKeyboard = scroll && keyboardAware;
 
@@ -53,10 +59,11 @@ export function ScreenWrapper({
     };
   }, [shouldHandleKeyboard]);
 
+  const baseBottomPadding =
+    tabBarHeight > 0 ? tabBarHeight + spacing.lg : spacing.xxxl + insets.bottom;
+
   const bottomPadding =
-    spacing.xxxl +
-    insets.bottom +
-    (shouldHandleKeyboard ? keyboardHeight + EXTRA_KEYBOARD_PADDING : 0);
+    baseBottomPadding + (shouldHandleKeyboard ? keyboardHeight + EXTRA_KEYBOARD_PADDING : 0);
 
   const contentContainerStyle = [
     padding && styles.padding,
@@ -85,14 +92,14 @@ export function ScreenWrapper({
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={edges}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]} edges={edges}>
       {scrollContent}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
+  safe: { flex: 1 },
   scroll: { flex: 1 },
   flex: { flex: 1 },
   padding: { padding: spacing.lg },

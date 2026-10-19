@@ -1,10 +1,12 @@
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { ScreenWrapper } from '@/components/layout/ScreenWrapper';
 import { EarningsCard } from '@/components/cards/EarningsCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { earningsService } from '@/services/api';
-import { formatCurrency, formatDuration } from '@/utils/format';
+import { formatCurrency, formatDuration, formatShiftRange } from '@/utils/format';
 import { colors, radius, spacing, typography } from '@/theme';
 
 export default function EarningsScreen() {
@@ -20,12 +22,30 @@ export default function EarningsScreen() {
     queryKey: ['shifts'],
     queryFn: () => earningsService.getShiftHistory(),
   });
+  const [refreshing, setRefreshing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      shiftsQuery.refetch();
+      summaryQuery.refetch();
+    }, []),
+  );
+
+  async function onRefresh() {
+    setRefreshing(true);
+    await Promise.all([summaryQuery.refetch(), shiftsQuery.refetch(), payoutsQuery.refetch()]);
+    setRefreshing(false);
+  }
 
   const summary = summaryQuery.data;
+  const shifts = shiftsQuery.data ?? [];
 
   return (
     <ScreenWrapper>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         <Text style={styles.title}>Earnings</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.metricsScroll}>
           <EarningsCard label="Today" value={summary?.today ?? 0} isCurrency metricKey="earnings" />
@@ -59,14 +79,19 @@ export default function EarningsScreen() {
         ))}
 
         <Text style={styles.section}>Shift history</Text>
-        {shiftsQuery.data?.map((shift) => (
-          <View key={shift.id} style={styles.shiftRow}>
-            <Text style={styles.shiftTitle}>{formatDuration(shift.durationMinutes)} online</Text>
-            <Text style={styles.shiftMeta}>
-              {shift.deliveriesCompleted} deliveries · {formatCurrency(shift.earnings)}
-            </Text>
-          </View>
-        ))}
+        {shifts.length === 0 ? (
+          <Text style={styles.shiftEmpty}>No completed shifts yet. Go online from Home to start a shift.</Text>
+        ) : (
+          shifts.map((shift) => (
+            <View key={shift.id} style={styles.shiftRow}>
+              <Text style={styles.shiftTitle}>{formatDuration(shift.durationMinutes)} online</Text>
+              <Text style={styles.shiftRange}>{formatShiftRange(shift.startedAt, shift.endedAt)}</Text>
+              <Text style={styles.shiftMeta}>
+                {shift.deliveriesCompleted} deliveries · {formatCurrency(shift.earnings)}
+              </Text>
+            </View>
+          ))
+        )}
       </ScrollView>
     </ScreenWrapper>
   );
@@ -104,5 +129,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.borderLight,
   },
   shiftTitle: { ...typography.bodyMedium },
+  shiftRange: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
   shiftMeta: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
+  shiftEmpty: { ...typography.body, color: colors.textSecondary, marginBottom: spacing.md },
 });

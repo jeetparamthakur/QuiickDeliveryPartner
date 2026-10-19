@@ -4,13 +4,30 @@ import type {
   DeliveryPartnerProfile,
   DeliveryRequest,
   PartnerDeliveryPreferences,
+  PartnerOrder,
+  PartnerOrdersTab,
   TripStep,
   VehicleType,
 } from '@/types/partner';
-import type { BankAccount, EarningsSummary, KycInfo, Payout, ShiftHistoryEntry } from '@/types/common';
+import type {
+  BankAccount,
+  EarningsSummary,
+  KycInfo,
+  PartnerOnlineStatus,
+  Payout,
+  ShiftHistoryEntry,
+} from '@/types/common';
 import type { NearbyStore } from '@/types/store';
 import type { NearbySeller } from '@/types/seller';
 import { getDistanceKm } from '@/utils/geo';
+import {
+  advanceRunMicroStep,
+  buildActiveRun,
+  enrichActiveRun,
+  MAX_RUN_ORDERS,
+  type ActiveRunState,
+} from '@/utils/deliveryRun';
+import type { ActiveDeliveryRun } from '@/types/partner';
 
 const delay = (ms = 400) => new Promise((r) => setTimeout(r, ms));
 
@@ -27,7 +44,51 @@ let mockProfile: DeliveryPartnerProfile = {
 
 let mockKyc: KycInfo = { status: 'pending', documents: [] };
 let mockBank: BankAccount | null = null;
-let mockActiveTrip: ActiveTrip | null = null;
+let mockActiveRun: ActiveRunState | null = null;
+
+const mockDeliveredOrders: PartnerOrder[] = [
+  {
+    id: 'dr-del-1',
+    orderId: 'ord-88',
+    orderNumber: 'QM-088',
+    storeId: 'store-1',
+    sellerId: 'seller-1',
+    sellerType: 'STORE',
+    pickupAddress: 'Quickmart Hub, Connaught Place, New Delhi',
+    pickupLatitude: 28.6315,
+    pickupLongitude: 77.2167,
+    customerAddress: 'India Gate, New Delhi',
+    customerLatitude: 28.6129,
+    customerLongitude: 77.2295,
+    partnerPickupRadiusKm: 8,
+    status: 'delivered',
+    orderTotal: 720,
+    deliveryFee: 42,
+    itemCount: 5,
+    createdAt: '2026-10-15T10:30:00.000Z',
+    completedAt: '2026-10-15T11:05:00.000Z',
+  },
+  {
+    id: 'dr-del-2',
+    orderId: 'ord-77',
+    orderNumber: 'QM-077',
+    sellerId: 'seller-ind-1',
+    sellerType: 'INDEPENDENT_SELLER',
+    pickupAddress: 'Karol Bagh Market, New Delhi',
+    pickupLatitude: 28.6512,
+    pickupLongitude: 77.191,
+    customerAddress: 'Paharganj, New Delhi',
+    customerLatitude: 28.6425,
+    customerLongitude: 77.214,
+    partnerPickupRadiusKm: 6,
+    status: 'delivered',
+    orderTotal: 480,
+    deliveryFee: 35,
+    itemCount: 2,
+    createdAt: '2026-10-14T16:00:00.000Z',
+    completedAt: '2026-10-14T16:40:00.000Z',
+  },
+];
 
 const mockDeliveryRequests: DeliveryRequest[] = [
   {
@@ -98,6 +159,56 @@ const mockShifts: ShiftHistoryEntry[] = [
   },
 ];
 
+let mockIsOnline = false;
+let mockOpenShiftStartedAt: string | null = null;
+
+function istDayStart(date: Date): Date {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const y = parts.find((p) => p.type === 'year')!.value;
+  const m = parts.find((p) => p.type === 'month')!.value;
+  const d = parts.find((p) => p.type === 'day')!.value;
+  return new Date(`${y}-${m}-${d}T00:00:00+05:30`);
+}
+
+function minutesInWindow(start: Date, end: Date, windowStart: Date, windowEnd: Date): number {
+  const from = Math.max(start.getTime(), windowStart.getTime());
+  const to = Math.min(end.getTime(), windowEnd.getTime());
+  if (to <= from) return 0;
+  return Math.floor((to - from) / 60000);
+}
+
+function mockTodayOnlineMinutes(): number {
+  const now = new Date();
+  const dayStart = istDayStart(now);
+  const tomorrowStart = istDayStart(new Date(now.getTime() + 86400000));
+  let total = 0;
+  for (const shift of mockShifts) {
+    total += minutesInWindow(
+      new Date(shift.startedAt),
+      new Date(shift.endedAt),
+      dayStart,
+      tomorrowStart,
+    );
+  }
+  if (mockIsOnline && mockOpenShiftStartedAt) {
+    total += minutesInWindow(new Date(mockOpenShiftStartedAt), now, dayStart, tomorrowStart);
+  }
+  return total;
+}
+
+function mockOnlineStatus(isOnline: boolean): PartnerOnlineStatus {
+  return {
+    isOnline,
+    currentShiftStartedAt: isOnline ? mockOpenShiftStartedAt : null,
+    todayOnlineMinutes: mockTodayOnlineMinutes(),
+  };
+}
+
 function syncProfileStep() {
   if (mockProfile.approvalStatus === 'approved') {
     mockProfile = {
@@ -124,25 +235,116 @@ function syncProfileStep() {
   }
 }
 
-function tripFromRequest(request: DeliveryRequest): ActiveTrip {
+function tripFromRun(run: ActiveRunState): ActiveTrip | null {
+  const stop = run.stops[run.currentStopIndex];
+  if (!stop) return null;
+  const request = mockDeliveryRequests.find((r) => r.id === stop.assignmentIds[0]);
+  if (!request) return null;
+  const status =
+    run.microStep === 'navigate_drop' || run.microStep === 'confirm_delivery'
+      ? 'picked_up'
+      : 'accepted';
   return {
     requestId: request.id,
     orderId: request.orderId,
-    orderNumber: request.orderNumber,
-    status: 'accepted',
+    orderNumber: stop.orderNumbers.length > 1
+      ? stop.orderNumbers.join(', ')
+      : request.orderNumber,
+    status,
     pickupAddress: request.pickupAddress,
     pickupLatitude: request.pickupLatitude,
     pickupLongitude: request.pickupLongitude,
     customerAddress: request.customerAddress,
     customerLatitude: request.customerLatitude,
     customerLongitude: request.customerLongitude,
-    deliveryFee: request.deliveryFee,
-    itemCount: request.itemCount,
-    step: 'navigate_pickup',
+    deliveryFee: stop.assignmentIds.reduce((sum, id) => {
+      const row = mockDeliveryRequests.find((r) => r.id === id);
+      return sum + (row?.deliveryFee ?? 0);
+    }, 0),
+    itemCount: stop.assignmentIds.reduce((sum, id) => {
+      const row = mockDeliveryRequests.find((r) => r.id === id);
+      return sum + (row?.itemCount ?? 0);
+    }, 0),
+    step: run.microStep,
   };
 }
 
+function markRequestsPickedUp(assignmentIds: string[]) {
+  for (const id of assignmentIds) {
+    const idx = mockDeliveryRequests.findIndex((r) => r.id === id);
+    if (idx !== -1) {
+      mockDeliveryRequests[idx] = { ...mockDeliveryRequests[idx], status: 'picked_up' };
+    }
+  }
+}
+
+function markRequestsDelivered(assignmentIds: string[]) {
+  for (const id of assignmentIds) {
+    const idx = mockDeliveryRequests.findIndex((r) => r.id === id);
+    if (idx === -1) continue;
+    const deliveredRequest = {
+      ...mockDeliveryRequests[idx],
+      status: 'delivered' as const,
+    };
+    mockDeliveryRequests[idx] = deliveredRequest;
+    mockDeliveredOrders.unshift({
+      ...deliveredRequest,
+      completedAt: new Date().toISOString(),
+      step: 'completed',
+    });
+  }
+}
+
+function partnerOrderStepForRun(run: ActiveRunState, assignmentId: string): TripStep | undefined {
+  const order = run.orders.find((o) => o.assignmentId === assignmentId);
+  if (!order) return undefined;
+  if (order.deliveryDone) return 'completed';
+  if (order.pickupDone) return 'navigate_drop';
+  const current = run.stops[run.currentStopIndex];
+  if (current?.assignmentIds.includes(assignmentId) && current.status === 'current') {
+    return run.microStep;
+  }
+  return 'navigate_pickup';
+}
+
 export const mockApi = {
+  session: {
+    getSession: async () => {
+      await delay(150);
+      return {
+        ...mockOnlineStatus(mockIsOnline),
+        deliveryScope: 'all_sellers' as const,
+        storeId: null,
+        sellerId: null,
+      };
+    },
+    setOnline: async (isOnline: boolean): Promise<PartnerOnlineStatus> => {
+      await delay(200);
+      if (isOnline && !mockIsOnline) {
+        mockOpenShiftStartedAt = new Date().toISOString();
+      }
+      if (!isOnline && mockIsOnline && mockOpenShiftStartedAt) {
+        const endedAt = new Date().toISOString();
+        const startedAt = mockOpenShiftStartedAt;
+        const durationMinutes = Math.max(
+          0,
+          Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 60000),
+        );
+        mockShifts.unshift({
+          id: `s-${Date.now()}`,
+          startedAt,
+          endedAt,
+          durationMinutes,
+          deliveriesCompleted: 0,
+          earnings: 0,
+        });
+        mockOpenShiftStartedAt = null;
+      }
+      mockIsOnline = isOnline;
+      return mockOnlineStatus(mockIsOnline);
+    },
+  },
+
   auth: {
     sendOtp: async (_phone: string) => {
       await delay();
@@ -248,7 +450,7 @@ export const mockApi = {
       await delay(300);
       return mockDeliveryRequests.filter((request) => {
         if (request.status !== 'requested') return false;
-        if (mockActiveTrip) return false;
+        if (mockActiveRun) return false;
 
         if (preferences.scope === 'store') {
           if (request.sellerType !== 'STORE') return false;
@@ -280,16 +482,60 @@ export const mockApi = {
       partnerId: string,
       partnerName: string
     ): Promise<ActiveTrip> => {
+      await mockApi.delivery.acceptRequestBatch(
+        [requestId],
+        partnerId,
+        partnerName,
+        28.6139,
+        77.209,
+      );
+      const trip = tripFromRun(mockActiveRun!);
+      if (!trip) throw new Error('Could not start trip');
+      return trip;
+    },
+    acceptRequestBatch: async (
+      assignmentIds: string[],
+      partnerId: string,
+      partnerName: string,
+      partnerLat: number,
+      partnerLng: number,
+    ): Promise<ActiveDeliveryRun> => {
       await delay();
-      const idx = mockDeliveryRequests.findIndex((r) => r.id === requestId);
-      if (idx === -1) throw new Error('Delivery request not found');
-      const request = mockDeliveryRequests[idx];
-      if (request.status !== 'requested') throw new Error('Request is no longer available');
+      if (mockActiveRun) throw new Error('Finish your current run first');
+      if (!assignmentIds.length) throw new Error('Select at least one request');
+      if (assignmentIds.length > MAX_RUN_ORDERS) {
+        throw new Error(`You can accept at most ${MAX_RUN_ORDERS} orders`);
+      }
 
-      mockDeliveryRequests[idx] = { ...request, status: 'accepted' };
-      mockActiveTrip = tripFromRequest(mockDeliveryRequests[idx]);
+      const unique = [...new Set(assignmentIds)];
+      const inputs = unique.map((id) => {
+        const request = mockDeliveryRequests.find((r) => r.id === id);
+        if (!request || request.status !== 'requested') {
+          throw new Error('One or more requests are unavailable');
+        }
+        return {
+          assignmentId: request.id,
+          orderId: request.orderId,
+          orderNumber: request.orderNumber,
+          pickupLat: request.pickupLatitude,
+          pickupLng: request.pickupLongitude,
+          pickupAddress: request.pickupAddress,
+          customerLat: request.customerLatitude,
+          customerLng: request.customerLongitude,
+          customerAddress: request.customerAddress,
+          deliveryFee: request.deliveryFee,
+          itemCount: request.itemCount,
+        };
+      });
+
+      for (const id of unique) {
+        const idx = mockDeliveryRequests.findIndex((r) => r.id === id);
+        mockDeliveryRequests[idx] = { ...mockDeliveryRequests[idx], status: 'accepted' };
+      }
+
+      mockActiveRun = buildActiveRun(inputs, partnerLat, partnerLng);
       mockProfile = { ...mockProfile, id: partnerId, name: partnerName || mockProfile.name };
-      return { ...mockActiveTrip };
+      return enrichActiveRun(mockActiveRun);
     },
     rejectRequest: async (requestId: string): Promise<DeliveryRequest> => {
       await delay();
@@ -298,53 +544,88 @@ export const mockApi = {
       mockDeliveryRequests[idx] = { ...mockDeliveryRequests[idx], status: 'rejected' };
       return mockDeliveryRequests[idx];
     },
+    listMyOrders: async (tab: PartnerOrdersTab): Promise<PartnerOrder[]> => {
+      await delay(300);
+      if (tab === 'delivered') {
+        return mockDeliveredOrders.map((o) => ({ ...o }));
+      }
+      if (!mockActiveRun) return [];
+      const rows: PartnerOrder[] = [];
+      for (const order of mockActiveRun.orders) {
+        const request = mockDeliveryRequests.find((r) => r.id === order.assignmentId);
+        if (!request) continue;
+        rows.push({
+          ...request,
+          status: order.deliveryDone ? 'delivered' : order.pickupDone ? 'picked_up' : request.status,
+          step: partnerOrderStepForRun(mockActiveRun!, order.assignmentId),
+        });
+      }
+      return rows;
+    },
+    getActiveRun: async (): Promise<ActiveDeliveryRun | null> => {
+      await delay(200);
+      return mockActiveRun ? enrichActiveRun(mockActiveRun) : null;
+    },
     getActiveTrip: async (): Promise<ActiveTrip | null> => {
       await delay(200);
-      return mockActiveTrip ? { ...mockActiveTrip } : null;
+      if (!mockActiveRun) return null;
+      const trip = tripFromRun(mockActiveRun);
+      return trip ? { ...trip } : null;
+    },
+    advanceActiveRun: async (): Promise<ActiveDeliveryRun | null> => {
+      await delay();
+      if (!mockActiveRun) return null;
+      const stop = mockActiveRun.stops[mockActiveRun.currentStopIndex];
+      if (!stop) {
+        mockActiveRun = null;
+        return null;
+      }
+
+      if (mockActiveRun.microStep === 'navigate_pickup') {
+        mockActiveRun = { ...mockActiveRun, microStep: 'confirm_pickup' };
+        return enrichActiveRun(mockActiveRun);
+      }
+      if (mockActiveRun.microStep === 'navigate_drop') {
+        mockActiveRun = { ...mockActiveRun, microStep: 'confirm_delivery' };
+        return enrichActiveRun(mockActiveRun);
+      }
+      if (mockActiveRun.microStep === 'confirm_pickup') {
+        markRequestsPickedUp(stop.assignmentIds);
+      }
+      if (mockActiveRun.microStep === 'confirm_delivery') {
+        markRequestsDelivered(stop.assignmentIds);
+        const fee = stop.assignmentIds.reduce((sum, id) => {
+          const row = mockDeliveryRequests.find((r) => r.id === id);
+          return sum + (row?.deliveryFee ?? 0);
+        }, 0);
+        mockEarnings = {
+          ...mockEarnings,
+          today: mockEarnings.today + fee,
+          week: mockEarnings.week + fee,
+        };
+      }
+
+      const advanced = advanceRunMicroStep(mockActiveRun);
+      if (advanced.completed) {
+        mockActiveRun = null;
+        return null;
+      }
+      mockActiveRun = advanced.run;
+      return enrichActiveRun(mockActiveRun);
     },
     updateTripStep: async (step: TripStep): Promise<ActiveTrip> => {
       await delay();
-      if (!mockActiveTrip) throw new Error('No active trip');
-      mockActiveTrip = { ...mockActiveTrip, step };
-      if (step === 'confirm_pickup') {
-        mockActiveTrip.status = 'picked_up';
-      }
-      if (step === 'completed') {
-        mockActiveTrip.status = 'delivered';
-        mockEarnings = {
-          ...mockEarnings,
-          today: mockEarnings.today + mockActiveTrip.deliveryFee,
-          week: mockEarnings.week + mockActiveTrip.deliveryFee,
-        };
-        const reqIdx = mockDeliveryRequests.findIndex((r) => r.id === mockActiveTrip!.requestId);
-        if (reqIdx !== -1) {
-          mockDeliveryRequests[reqIdx] = {
-            ...mockDeliveryRequests[reqIdx],
-            status: 'delivered',
-          };
-        }
-        mockActiveTrip = null;
-        throw new Error('TRIP_COMPLETED');
-      }
-      return { ...mockActiveTrip };
+      if (!mockActiveRun) throw new Error('No active trip');
+      mockActiveRun = { ...mockActiveRun, microStep: step as ActiveRunState['microStep'] };
+      const trip = tripFromRun(mockActiveRun);
+      if (!trip) throw new Error('No active trip');
+      return trip;
     },
     advanceTrip: async (): Promise<ActiveTrip | null> => {
-      if (!mockActiveTrip) return null;
-      const order: TripStep[] = [
-        'navigate_pickup',
-        'confirm_pickup',
-        'navigate_drop',
-        'confirm_delivery',
-        'completed',
-      ];
-      const idx = order.indexOf(mockActiveTrip.step);
-      const next = order[idx + 1] ?? 'completed';
-      try {
-        return await mockApi.delivery.updateTripStep(next);
-      } catch (e) {
-        if (e instanceof Error && e.message === 'TRIP_COMPLETED') return null;
-        throw e;
-      }
+      const run = await mockApi.delivery.advanceActiveRun();
+      if (!run) return null;
+      const trip = tripFromRun(mockActiveRun!);
+      return trip ? { ...trip } : null;
     },
     seedRequest: async () => {
       const id = `dr-${Date.now()}`;

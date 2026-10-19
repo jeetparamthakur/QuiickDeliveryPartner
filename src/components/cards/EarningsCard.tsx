@@ -1,7 +1,8 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, gradients, metricAccents, radius, spacing, typography, shadows } from '@/theme';
+import { metricAccents, spacing, radius } from '@/theme';
+import { useTheme } from '@/context/ThemeContext';
 import { formatCurrency } from '@/utils/format';
 
 type MetricKey = keyof typeof metricAccents;
@@ -23,67 +24,76 @@ export function EarningsCard({
   variant = 'default',
   metricKey = 'default',
 }: Props) {
+  const { colors, typography, shadows, fontFamily } = useTheme();
   const displayValue = isCurrency && typeof value === 'number' ? formatCurrency(value) : value;
   const accent = metricAccents[metricKey] ?? metricAccents.default;
 
   if (variant === 'featured') {
     return (
-      <LinearGradient colors={[...gradients.primary]} style={styles.featuredCard}>
-        <View style={styles.featuredIconWrap}>
+      <LinearGradient
+        colors={[colors.primary, colors.primaryDark]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[
+          {
+            flex: 1,
+            borderRadius: radius.xl,
+            padding: spacing.lg,
+            ...shadows.md,
+          },
+        ]}
+      >
+        <View
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: 'rgba(255,255,255,0.22)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: spacing.sm,
+          }}
+        >
           <Ionicons name={icon} size={22} color={colors.white} />
         </View>
-        <Text style={styles.featuredValue}>{displayValue}</Text>
-        <Text style={styles.featuredLabel}>{label}</Text>
+        <Text style={{ ...typography.h1, fontSize: 24, color: colors.white, fontFamily: fontFamily.bold }}>
+          {displayValue}
+        </Text>
+        <Text style={{ ...typography.caption, color: 'rgba(255,255,255,0.88)', marginTop: spacing.xs }}>{label}</Text>
       </LinearGradient>
     );
   }
 
   return (
-    <View style={styles.card}>
-      <View style={[styles.iconWrap, { backgroundColor: accent.bg }]}>
+    <View
+      style={[
+        {
+          width: 160,
+          backgroundColor: colors.card,
+          borderRadius: radius.lg,
+          padding: spacing.lg,
+          marginRight: spacing.md,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.borderSubtle,
+        },
+        shadows.sm,
+      ]}
+    >
+      <View
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 18,
+          backgroundColor: accent.bg,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: spacing.sm,
+        }}
+      >
         <Ionicons name={icon} size={20} color={accent.icon} />
       </View>
-      <Text style={styles.value}>{displayValue}</Text>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={{ ...typography.h2, color: colors.text, fontFamily: fontFamily.bold }}>{displayValue}</Text>
+      <Text style={{ ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs }}>{label}</Text>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  card: {
-    width: 160,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginRight: spacing.md,
-    ...shadows.sm,
-  },
-  featuredCard: {
-    width: 180,
-    borderRadius: radius.xl,
-    padding: spacing.lg,
-    marginRight: spacing.md,
-    ...shadows.md,
-  },
-  iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  featuredIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  value: { ...typography.h2, color: colors.text },
-  featuredValue: { ...typography.h1, color: colors.white, fontSize: 24 },
-  label: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
-  featuredLabel: { ...typography.caption, color: 'rgba(255,255,255,0.85)', marginTop: spacing.xs },
-});

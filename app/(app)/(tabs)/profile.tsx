@@ -18,7 +18,7 @@ export default function ProfileTabScreen() {
   const profile = usePartnerStore((s) => s.profile);
   const logoutAuth = useAuthStore((s) => s.logout);
   const clearProfile = usePartnerStore((s) => s.clearProfile);
-  const setOnline = usePartnerSessionStore((s) => s.setOnline);
+  const applyOnlineStatus = usePartnerSessionStore((s) => s.applyOnlineStatus);
   const preferences = usePartnerSessionStore((s) => s.preferences);
   const requestWorkplaceOpen = useWorkplaceUiStore((s) => s.requestOpen);
 
@@ -26,8 +26,9 @@ export default function ProfileTabScreen() {
   const bankQuery = useQuery({ queryKey: ['bank'], queryFn: () => bankService.get() });
 
   async function handleLogout() {
-    await partnerSessionService.setOnline(false).catch(() => undefined);
-    setOnline(false);
+    const status = await partnerSessionService.setOnline(false).catch(() => null);
+    if (status) applyOnlineStatus(status);
+    else applyOnlineStatus({ isOnline: false, currentShiftStartedAt: null, todayOnlineMinutes: 0 });
     await authService.logout().catch(() => undefined);
     await clearProfile();
     await logoutAuth();

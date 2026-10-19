@@ -1,70 +1,147 @@
-import { useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useCallback, useMemo } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import MapView, { Marker } from 'react-native-maps';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { ScreenWrapper } from '@/components/layout/ScreenWrapper';
 import { Button } from '@/components/ui/Button';
+import { TripStepIndicator } from '@/components/trip/TripStepIndicator';
+import { TripActionFooter } from '@/components/trip/TripActionFooter';
+import { RunStopsList } from '@/components/trip/RunStopsList';
+import { TRIP_STEP_UI } from '@/constants/tripSteps';
+import { useAdvanceActiveTrip } from '@/hooks/useAdvanceActiveTrip';
 import { deliveryService } from '@/services/api';
-import { TRIP_STEP_LABELS, type TripStep } from '@/types';
+import { useTheme } from '@/context/ThemeContext';
+import type { ActiveTrip } from '@/types/partner';
 import { formatCurrency } from '@/utils/format';
-import { openMapsNavigation } from '@/utils/maps';
-import { colors, radius, spacing, typography } from '@/theme';
-
-const STEP_ACTIONS: Record<TripStep, { title: string; maps?: 'pickup' | 'drop' }> = {
-  navigate_pickup: { title: 'Navigate to pickup', maps: 'pickup' },
-  confirm_pickup: { title: 'Confirm pickup' },
-  navigate_drop: { title: 'Navigate to customer', maps: 'drop' },
-  confirm_delivery: { title: 'Confirm delivery' },
-  completed: { title: 'Trip completed' },
-};
+import { openMapsNavigation, openMapsRoute } from '@/utils/maps';
+import { appConfirm } from '@/utils/appDialog';
 
 export default function TripScreen() {
   const { orderId } = useLocalSearchParams<{ orderId: string }>();
-  const queryClient = useQueryClient();
-  const [advancing, setAdvancing] = useState(false);
+  const { colors, radius, spacing, typography } = useTheme();
+  const { advance, advancing } = useAdvanceActiveTrip();
+
+  const runQuery = useQuery({
+    queryKey: ['active-run'],
+    queryFn: () => deliveryService.getActiveRun(),
+  });
 
   const tripQuery = useQuery({
     queryKey: ['active-trip'],
     queryFn: () => deliveryService.getActiveTrip(),
   });
 
-  const trip = tripQuery.data;
-  const matchesOrder = !orderId || trip?.orderId === orderId;
+  useFocusEffect(
+    useCallback(() => {
+      void runQuery.refetch();
+      void tripQuery.refetch();
+    }, [runQuery.refetch, tripQuery.refetch]),
+  );
 
-  async function handlePrimaryAction() {
-    if (!trip) return;
-    const config = STEP_ACTIONS[trip.step];
-    if (config.maps === 'pickup') {
-      openMapsNavigation(trip.pickupLatitude, trip.pickupLongitude, trip.pickupAddress);
+  const run = runQuery.data;
+  const trip = tripQuery.data;
+  const step = run?.microStep ?? trip?.step;
+  const matchesOrder =
+    !orderId || trip?.orderId === orderId || run?.orders.some((o) => o.orderId === orderId);
+
+  const currentStop = run?.currentStop;
+  const isMultiOrder = (run?.orders.length ?? 0) > 1;
+
+  const mapRegion = useMemo(() => {
+    if (currentStop) {
+      return {
+        latitude: currentStop.latitude,
+        longitude: currentStop.longitude,
+        latitudeDelta: 0.04,
+        longitudeDelta: 0.04,
+      };
+    }
+    if (!trip) return null;
+    return {
+      latitude:
+        trip.step.startsWith('navigate') || trip.step === 'confirm_pickup'
+          ? trip.pickupLatitude
+          : trip.customerLatitude,
+      longitude:
+        trip.step.startsWith('navigate') || trip.step === 'confirm_pickup'
+          ? trip.pickupLongitude
+          : trip.customerLongitude,
+      latitudeDelta: 0.04,
+      longitudeDelta: 0.04,
+    };
+  }, [currentStop, trip]);
+
+  function openMapsForStep(activeTrip: ActiveTrip) {
+    if (currentStop) {
+      openMapsNavigation(currentStop.latitude, currentStop.longitude, currentStop.address);
       return;
     }
-    if (config.maps === 'drop') {
+    const mapsTarget = TRIP_STEP_UI[activeTrip.step].mapsTarget;
+    if (mapsTarget === 'pickup') {
       openMapsNavigation(
-        trip.customerLatitude,
-        trip.customerLongitude,
-        trip.customerAddress
+        activeTrip.pickupLatitude,
+        activeTrip.pickupLongitude,
+        activeTrip.pickupAddress,
       );
       return;
     }
-
-    setAdvancing(true);
-    try {
-      const next = await deliveryService.advanceTrip();
-      await queryClient.invalidateQueries({ queryKey: ['active-trip'] });
-      await queryClient.invalidateQueries({ queryKey: ['earnings-summary'] });
-      if (!next) {
-        router.replace('/(app)/(tabs)/home');
-      } else {
-        tripQuery.refetch();
-      }
-    } finally {
-      setAdvancing(false);
+    if (mapsTarget === 'drop') {
+      openMapsNavigation(
+        activeTrip.customerLatitude,
+        activeTrip.customerLongitude,
+        activeTrip.customerAddress,
+      );
     }
   }
 
-  if (tripQuery.isLoading) {
+  function openFullRoute() {
+    if (!run) return;
+    const remaining = run.stops
+      .filter((s) => s.status !== 'done')
+      .map((s) => ({ latitude: s.latitude, longitude: s.longitude }));
+    openMapsRoute(remaining);
+  }
+
+  function runAdvance(activeTrip: ActiveTrip) {
+    if (!step) return;
+    const confirm = TRIP_STEP_UI[step].confirmBeforeAdvance;
+    const orderLabel = currentStop?.orderNumbers.join(', ') ?? activeTrip.orderNumber;
+    const completedFee = run?.totalDeliveryFee ?? activeTrip.deliveryFee;
+
+    const runAdvanceAction = () => {
+      void advance({
+        completedOrderNumber: isMultiOrder ? `${run?.orders.length} orders` : orderLabel,
+        completedFee: isMultiOrder ? completedFee : activeTrip.deliveryFee,
+        onTripUpdated: () => {
+          tripQuery.refetch();
+          runQuery.refetch();
+        },
+      });
+    };
+
+    if (confirm) {
+      appConfirm(confirm.title, confirm.message, {
+        confirmText: confirm.confirmText,
+        onConfirm: runAdvanceAction,
+      });
+      return;
+    }
+    runAdvanceAction();
+  }
+
+  const primaryLabel = useMemo(() => {
+    if (!step) return undefined;
+    const base = TRIP_STEP_UI[step].primaryAdvanceLabel;
+    const orderLabel = currentStop?.orderNumbers[0];
+    if (!orderLabel) return base;
+    if (step === 'confirm_pickup') return `Order picked up · ${orderLabel}`;
+    if (step === 'confirm_delivery') return `Mark delivered · ${orderLabel}`;
+    return base;
+  }, [step, currentStop]);
+
+  if (tripQuery.isLoading || runQuery.isLoading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator color={colors.primary} />
@@ -72,100 +149,139 @@ export default function TripScreen() {
     );
   }
 
-  if (!trip || !matchesOrder) {
+  if (!trip || !matchesOrder || !step) {
     return (
       <ScreenWrapper scroll={false}>
         <View style={styles.centered}>
-          <Text style={styles.emptyTitle}>No active trip</Text>
+          <Text style={[typography.h2, { marginBottom: spacing.lg }]}>No active trip</Text>
           <Button title="Back to home" onPress={() => router.replace('/(app)/(tabs)/home')} />
         </View>
       </ScreenWrapper>
     );
   }
 
-  const action = STEP_ACTIONS[trip.step];
-  const region = {
-    latitude: trip.step.startsWith('navigate') || trip.step === 'confirm_pickup' ? trip.pickupLatitude : trip.customerLatitude,
-    longitude:
-      trip.step.startsWith('navigate') || trip.step === 'confirm_pickup'
-        ? trip.pickupLongitude
-        : trip.customerLongitude,
-    latitudeDelta: 0.04,
-    longitudeDelta: 0.04,
-  };
-
   return (
     <ScreenWrapper scroll={false} edges={['top', 'bottom']}>
-      <View style={styles.container}>
+      <ScrollView
+        contentContainerStyle={[styles.container, { padding: spacing.lg, gap: spacing.md }]}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.header}>
-          <Text style={styles.order}>{trip.orderNumber}</Text>
-          <Text style={styles.fee}>{formatCurrency(trip.deliveryFee)}</Text>
-        </View>
-        <Text style={styles.step}>{TRIP_STEP_LABELS[trip.step]}</Text>
-
-        <MapView style={styles.map} region={region}>
-          <Marker
-            coordinate={{ latitude: trip.pickupLatitude, longitude: trip.pickupLongitude }}
-            title="Pickup"
-            pinColor={colors.primary}
-          />
-          <Marker
-            coordinate={{ latitude: trip.customerLatitude, longitude: trip.customerLongitude }}
-            title="Customer"
-          />
-        </MapView>
-
-        <View style={styles.details}>
-          <DetailRow icon="storefront-outline" text={trip.pickupAddress} />
-          <DetailRow icon="location-outline" text={trip.customerAddress} />
-          <Text style={styles.items}>{trip.itemCount} items in order</Text>
+          <View style={styles.headerText}>
+            <Text style={typography.h2}>
+              {isMultiOrder ? `${run?.orders.length} orders` : trip.orderNumber}
+            </Text>
+            <Text style={[typography.caption, { color: colors.textSecondary }]}>
+              {isMultiOrder ? 'Total earn' : 'You earn'}
+            </Text>
+          </View>
+          <Text style={[typography.h2, { color: colors.primary }]}>
+            {formatCurrency(run?.totalDeliveryFee ?? trip.deliveryFee)}
+          </Text>
         </View>
 
-        <Button
-          title={action.title}
-          onPress={handlePrimaryAction}
+        <TripStepIndicator step={step} />
+
+        {run && isMultiOrder ? <RunStopsList run={run} /> : null}
+
+        {mapRegion ? (
+          <MapView style={[styles.map, { borderRadius: radius.lg }]} region={mapRegion}>
+            {run
+              ? run.stops.map((stop) => (
+                  <Marker
+                    key={stop.stopId}
+                    coordinate={{ latitude: stop.latitude, longitude: stop.longitude }}
+                    title={stop.orderNumbers.join(', ')}
+                    pinColor={
+                      stop.status === 'current'
+                        ? colors.primary
+                        : stop.status === 'done'
+                          ? colors.success
+                          : colors.textMuted
+                    }
+                  />
+                ))
+              : (
+                <>
+                  <Marker
+                    coordinate={{ latitude: trip.pickupLatitude, longitude: trip.pickupLongitude }}
+                    title="Pickup"
+                    pinColor={colors.primary}
+                  />
+                  <Marker
+                    coordinate={{
+                      latitude: trip.customerLatitude,
+                      longitude: trip.customerLongitude,
+                    }}
+                    title="Customer"
+                  />
+                </>
+              )}
+          </MapView>
+        ) : null}
+
+        <View
+          style={[
+            styles.details,
+            {
+              backgroundColor: colors.surface,
+              borderRadius: radius.lg,
+              padding: spacing.lg,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          {currentStop ? (
+            <DetailRow icon="navigate-outline" text={currentStop.address} color={colors.primary} />
+          ) : (
+            <>
+              <DetailRow icon="storefront-outline" text={trip.pickupAddress} color={colors.primary} />
+              <DetailRow icon="location-outline" text={trip.customerAddress} color={colors.primary} />
+            </>
+          )}
+          <Text style={[typography.caption, { color: colors.textMuted, marginTop: spacing.xs }]}>
+            {trip.itemCount} items at this stop
+          </Text>
+        </View>
+
+        <TripActionFooter
+          step={step}
           loading={advancing}
-          fullWidth
+          primaryAdvanceLabel={primaryLabel}
+          onAdvance={() => runAdvance(trip)}
+          onOpenMaps={TRIP_STEP_UI[step].mapsTarget ? () => openMapsForStep(trip) : undefined}
+          onViewFullRoute={run && run.stopsRemaining > 1 ? openFullRoute : undefined}
+          onDismiss={() => router.back()}
         />
-        <Button
-          title="Cancel trip view"
-          variant="ghost"
-          onPress={() => router.back()}
-          fullWidth
-          style={{ marginTop: spacing.sm }}
-        />
-      </View>
+      </ScrollView>
     </ScreenWrapper>
   );
 }
 
-function DetailRow({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; text: string }) {
+function DetailRow({
+  icon,
+  text,
+  color,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  text: string;
+  color: string;
+}) {
+  const { typography, spacing } = useTheme();
   return (
-    <View style={styles.detailRow}>
-      <Ionicons name={icon} size={18} color={colors.primary} />
-      <Text style={styles.detailText}>{text}</Text>
+    <View style={[styles.detailRow, { gap: spacing.sm }]}>
+      <Ionicons name={icon} size={18} color={color} />
+      <Text style={[typography.bodySmall, { flex: 1 }]}>{text}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: spacing.lg, gap: spacing.md },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  emptyTitle: { ...typography.h2, marginBottom: spacing.lg },
+  container: { flexGrow: 1 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  order: { ...typography.h2 },
-  fee: { ...typography.h2, color: colors.primary },
-  step: { ...typography.body, color: colors.textSecondary },
-  map: { flex: 1, borderRadius: radius.lg, minHeight: 220 },
-  details: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    gap: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  detailRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
-  detailText: { ...typography.bodySmall, flex: 1, color: colors.text },
-  items: { ...typography.caption, color: colors.textMuted, marginTop: spacing.xs },
+  headerText: { flex: 1, gap: 2 },
+  map: { flex: 1, minHeight: 220 },
+  details: { gap: 8, borderWidth: 1 },
+  detailRow: { flexDirection: 'row', alignItems: 'flex-start' },
 });

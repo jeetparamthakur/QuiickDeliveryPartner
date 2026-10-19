@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { TextInput, View, Text, StyleSheet, TextInputProps, ViewStyle } from 'react-native';
-import { colors, radius, spacing, typography } from '@/theme';
+import { useTheme } from '@/context/ThemeContext';
 
 type Props = TextInputProps & {
   label?: string;
@@ -10,35 +11,48 @@ type Props = TextInputProps & {
 };
 
 export function Input({ label, error, hint, style, containerStyle, noMargin, ...props }: Props) {
+  const { colors, radius, spacing, typography } = useTheme();
+  const [focused, setFocused] = useState(false);
+
   return (
-    <View style={[styles.container, noMargin && styles.noMargin, containerStyle]}>
-      {label && <Text style={styles.label}>{label}</Text>}
+    <View style={[styles.container, noMargin && styles.noMargin, { marginBottom: noMargin ? 0 : spacing.lg }, containerStyle]}>
+      {label ? <Text style={[typography.label, { color: colors.text, marginBottom: spacing.sm }]}>{label}</Text> : null}
       <TextInput
-        style={[styles.input, error && styles.inputError, style]}
+        style={[
+          typography.body,
+          {
+            backgroundColor: colors.searchFill,
+            borderWidth: 1,
+            borderColor: error ? colors.error : focused ? colors.primary : colors.border,
+            borderRadius: radius.md,
+            paddingHorizontal: spacing.lg,
+            paddingVertical: spacing.md,
+            color: colors.text,
+          },
+          style,
+        ]}
         placeholderTextColor={colors.textMuted}
+        onFocus={(e) => {
+          setFocused(true);
+          props.onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          setFocused(false);
+          props.onBlur?.(e);
+        }}
         {...props}
       />
-      {error && <Text style={styles.error}>{error}</Text>}
-      {hint && !error && <Text style={styles.hint}>{hint}</Text>}
+      {error ? (
+        <Text style={[typography.caption, { color: colors.error, marginTop: spacing.xs }]}>{error}</Text>
+      ) : null}
+      {hint && !error ? (
+        <Text style={[typography.caption, { color: colors.textMuted, marginTop: spacing.xs }]}>{hint}</Text>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { marginBottom: spacing.lg },
-  noMargin: { marginBottom: 0 },
-  label: { ...typography.label, color: colors.text, marginBottom: spacing.sm },
-  input: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    ...typography.body,
-    color: colors.text,
-  },
-  inputError: { borderColor: colors.danger },
-  error: { ...typography.caption, color: colors.danger, marginTop: spacing.xs },
-  hint: { ...typography.caption, color: colors.textMuted, marginTop: spacing.xs },
+  container: {},
+  noMargin: {},
 });

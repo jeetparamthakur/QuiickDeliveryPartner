@@ -55,7 +55,7 @@ export class ApiError extends Error {
   }
 }
 
-const FALLBACK_API_BASE_URL = 'http://localhost:3000';
+const FALLBACK_API_BASE_URL = 'http://localhost:3040';
 
 function isAndroidEmulator(): boolean {
   if (Platform.OS !== 'android') return false;
@@ -115,7 +115,7 @@ function getDevMachineHost(): string | null {
 const USE_ADB_REVERSE = process.env.EXPO_PUBLIC_API_VIA_ADB === 'true';
 
 function resolveApiBaseUrl(raw: string): string {
-  // adb reverse tcp:3000 tcp:3000 — device 127.0.0.1:3000 → Mac localhost:3000
+  // adb reverse tcp:3040 tcp:3040 — device 127.0.0.1:3040 → Mac localhost:3040
   if (USE_ADB_REVERSE) return raw;
   if (!raw.includes('localhost') && !raw.includes('127.0.0.1')) return raw;
   const host = getDevMachineHost();
@@ -127,8 +127,15 @@ export const API_BASE_URL = resolveApiBaseUrl(
   process.env.EXPO_PUBLIC_API_BASE_URL ?? FALLBACK_API_BASE_URL,
 );
 export const API_VERSION = process.env.EXPO_PUBLIC_API_VERSION ?? 'v1';
+/** Only `EXPO_PUBLIC_USE_MOCK_API=true` enables mocks; unset/false always uses the real API. */
 export const USE_MOCK_API = process.env.EXPO_PUBLIC_USE_MOCK_API === 'true';
 const API_DEBUG = __DEV__ && process.env.EXPO_PUBLIC_API_DEBUG !== 'false';
+
+if (__DEV__ && USE_MOCK_API) {
+  console.warn(
+    '[API config] EXPO_PUBLIC_USE_MOCK_API=true — using in-app mocks. Set it to false in .env for local backend testing.',
+  );
+}
 
 export function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, '');
@@ -348,10 +355,17 @@ export async function apiClient<T>(
       hint =
         'If this keeps happening after a reload, force-close Expo Go and reopen. Ensure QuickmartcoreBackend is running (npm run dev).';
     } else if (cannotReachServer) {
+      const apiPort = (() => {
+        try {
+          return new URL(API_BASE_URL).port || '3040';
+        } catch {
+          return '3040';
+        }
+      })();
       userMessage =
-        'Could not reach the API server. Start QuickmartcoreBackend (npm run dev) on port 3000 and keep phone and laptop on the same Wi‑Fi.';
+        `Could not reach the API server. Start QuickmartcoreBackend (npm run dev) on port ${apiPort} and keep phone and laptop on the same Wi‑Fi.`;
       hint =
-        'In ../QuickmartcoreBackend run: npm run dev. App API: npm start (LAN) or set EXPO_PUBLIC_API_LAN_HOST in .env.';
+        'In ../QuickmartcoreBackend run: npm run dev. Match EXPO_PUBLIC_API_BASE_URL port to backend PORT. LAN: npm start; USB: npm run start:usb.';
     }
 
     const networkError = new ApiError('NETWORK_ERROR', userMessage);

@@ -14,7 +14,11 @@ async function applySessionFromServer() {
   if (!session) return;
 
   const store = usePartnerSessionStore.getState();
-  store.setOnline(session.isOnline);
+  store.applyOnlineStatus({
+    isOnline: session.isOnline,
+    currentShiftStartedAt: session.currentShiftStartedAt ?? null,
+    todayOnlineMinutes: session.todayOnlineMinutes ?? 0,
+  });
   if (session.deliveryScope) {
     store.setPreferences({
       scope: session.deliveryScope,

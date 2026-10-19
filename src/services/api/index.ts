@@ -1,16 +1,27 @@
 import { USE_MOCK_API, apiClient, normalizePhone, uploadMultipart } from './client';
 import { mockApi } from './mock';
 import { mapActiveTrip } from './mappers/activeTrip';
+import { mapActiveRun } from './mappers/activeRun';
 import { mapBackendProfile } from './mappers/partnerProfile';
 import type {
   ActiveTrip,
+  ActiveDeliveryRun,
   DeliveryPartnerProfile,
   DeliveryRequest,
   PartnerDeliveryPreferences,
+  PartnerOrder,
+  PartnerOrdersTab,
   TripStep,
   VehicleType,
 } from '@/types/partner';
-import type { BankAccount, EarningsSummary, KycInfo, Payout, ShiftHistoryEntry } from '@/types/common';
+import type {
+  BankAccount,
+  EarningsSummary,
+  KycInfo,
+  PartnerOnlineStatus,
+  Payout,
+  ShiftHistoryEntry,
+} from '@/types/common';
 import type { NearbyStore } from '@/types/store';
 import type { NearbySeller } from '@/types/seller';
 
@@ -94,14 +105,15 @@ export const deliveryPartnerService = {
     );
     return mapBackendProfile(raw);
   },
-  getSession: (): Promise<{
-    isOnline: boolean;
-    deliveryScope?: PartnerDeliveryPreferences['scope'];
-    storeId?: string | null;
-    sellerId?: string | null;
-  }> =>
+  getSession: (): Promise<
+    PartnerOnlineStatus & {
+      deliveryScope?: PartnerDeliveryPreferences['scope'];
+      storeId?: string | null;
+      sellerId?: string | null;
+    }
+  > =>
     USE_MOCK_API
-      ? Promise.resolve({ isOnline: false, deliveryScope: 'all_sellers' })
+      ? mockApi.session.getSession()
       : apiClient('/delivery-partner/session'),
   updatePreferences: (
     preferences: PartnerDeliveryPreferences,
@@ -165,16 +177,54 @@ export const deliveryService = {
     if (!trip) throw new Error('Invalid active trip response');
     return trip;
   },
+  acceptRequestBatch: async (
+    assignmentIds: string[],
+    partnerId: string,
+    partnerName: string,
+    partnerLat: number,
+    partnerLng: number,
+  ): Promise<ActiveDeliveryRun> => {
+    if (USE_MOCK_API) {
+      return mockApi.delivery.acceptRequestBatch(
+        assignmentIds,
+        partnerId,
+        partnerName,
+        partnerLat,
+        partnerLng,
+      );
+    }
+    const raw = await apiClient<unknown>('/delivery-partner/requests/accept-batch', {
+      method: 'POST',
+      body: { assignmentIds },
+    });
+    const run = mapActiveRun(raw);
+    if (!run) throw new Error('Invalid active run response');
+    return run;
+  },
   rejectRequest: (requestId: string) =>
     USE_MOCK_API
       ? mockApi.delivery.rejectRequest(requestId)
       : apiClient<DeliveryRequest>(`/delivery-partner/requests/${requestId}/reject`, {
           method: 'POST',
         }),
+  listMyOrders: (tab: PartnerOrdersTab): Promise<PartnerOrder[]> =>
+    USE_MOCK_API
+      ? mockApi.delivery.listMyOrders(tab)
+      : apiClient<PartnerOrder[]>(`/delivery-partner/orders?tab=${tab}`),
+  getActiveRun: async (): Promise<ActiveDeliveryRun | null> => {
+    if (USE_MOCK_API) return mockApi.delivery.getActiveRun();
+    const raw = await apiClient<unknown>('/delivery-partner/runs/active');
+    return mapActiveRun(raw);
+  },
   getActiveTrip: async (): Promise<ActiveTrip | null> => {
     if (USE_MOCK_API) return mockApi.delivery.getActiveTrip();
     const raw = await apiClient<unknown>('/delivery-partner/trips/active');
     return mapActiveTrip(raw);
+  },
+  advanceActiveRun: async (): Promise<ActiveDeliveryRun | null> => {
+    if (USE_MOCK_API) return mockApi.delivery.advanceActiveRun();
+    const raw = await apiClient<unknown>('/delivery-partner/runs/active/advance', { method: 'POST' });
+    return mapActiveRun(raw);
   },
   advanceTrip: async (): Promise<ActiveTrip | null> => {
     if (USE_MOCK_API) return mockApi.delivery.advanceTrip();
@@ -212,10 +262,10 @@ export const deviceService = {
 };
 
 export const partnerSessionService = {
-  setOnline: (isOnline: boolean) =>
+  setOnline: (isOnline: boolean): Promise<PartnerOnlineStatus> =>
     USE_MOCK_API
-      ? Promise.resolve({ isOnline })
-      : apiClient('/delivery-partner/online-status', {
+      ? mockApi.session.setOnline(isOnline)
+      : apiClient<PartnerOnlineStatus>('/delivery-partner/online-status', {
           method: 'PATCH',
           body: { isOnline },
         }),

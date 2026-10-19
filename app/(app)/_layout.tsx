@@ -12,6 +12,7 @@ export default function AppLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="trip/[orderId]" options={{ presentation: 'fullScreenModal' }} />
+        <Stack.Screen name="orders/[orderId]" />
         <Stack.Screen name="support" />
       </Stack>
     </WorkplaceSelectionGate>

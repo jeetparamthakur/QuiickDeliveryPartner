@@ -16,7 +16,11 @@ import { AuthProgress } from '@/components/layout/AuthProgress';
 import { PhoneNumberInput } from '@/components/ui/PhoneNumberInput';
 import { authService } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
-import { colors, spacing, typography, radius, shadows, gradients } from '@/theme';
+import { spacing, typography, radius, shadows, colors as themeColors } from '@/theme';
+import { useTheme } from '@/context/ThemeContext';
+import { Button } from '@/components/ui/Button';
+
+const CARD_OVERLAP = 28;
 
 const FEATURES = [
   { icon: 'bicycle-outline' as const, label: 'Flexible shifts' },
@@ -25,6 +29,7 @@ const FEATURES = [
 ];
 
 export default function LoginScreen() {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [phone, setPhone] = useState('');
   const [accepted, setAccepted] = useState(false);
@@ -50,7 +55,8 @@ export default function LoginScreen() {
       await authService.sendOtp(fullPhone);
       await setPhoneStore(fullPhone);
       router.push({ pathname: '/(auth)/otp', params: { phone: fullPhone } });
-    } catch {
+    } catch (err) {
+      console.error('[Login] sendOtp failed:', err);
       setError('Failed to send OTP. Please try again.');
     } finally {
       setLoading(false);
@@ -59,33 +65,75 @@ export default function LoginScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.screen}
+      style={[styles.screen, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + spacing.xl }]}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <LinearGradient
-          colors={[...gradients.primary]}
+          colors={[colors.primaryLight, colors.background]}
+          locations={[0, 1]}
           style={[styles.hero, { paddingTop: insets.top + spacing.lg }]}
+          pointerEvents="none"
         >
-          <AuthProgress currentStep={1} variant="light" />
-          <Text style={styles.heroTitle}>Quiick Delivery Partner</Text>
-          <Text style={styles.heroSubtitle}>Deliver locally and earn on your schedule</Text>
-          <View style={styles.featureRow}>
-            {FEATURES.map((f) => (
-              <View key={f.label} style={styles.featurePill}>
-                <Ionicons name={f.icon} size={14} color="#fff" />
-                <Text style={styles.featureText}>{f.label}</Text>
+          <View style={[styles.heroOrb1, { backgroundColor: colors.accentLight }]} pointerEvents="none" />
+          <View style={[styles.heroOrb2, { backgroundColor: colors.primaryLight }]} pointerEvents="none" />
+
+          <View style={styles.heroContent} pointerEvents="none">
+            <AuthProgress currentStep={1} variant="light" />
+
+            <View style={styles.logoWrap}>
+              <View style={styles.logo}>
+                <Text style={styles.logoText}>Q</Text>
               </View>
-            ))}
+              <View style={styles.logoBadge}>
+                <Ionicons name="shield-checkmark" size={14} color={colors.primary} />
+              </View>
+            </View>
+
+            <Text style={[styles.heroTitle, { color: colors.text }]}>Quickmart Delivery</Text>
+            <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>
+              Deliver orders and earn on your schedule from one place
+            </Text>
+
+            <View style={styles.featureRow}>
+              {FEATURES.map((feature) => (
+                <View
+                  key={feature.label}
+                  style={[
+                    styles.featurePill,
+                    { backgroundColor: colors.card, borderColor: colors.borderSubtle },
+                  ]}
+                >
+                  <Ionicons name={feature.icon} size={14} color={colors.primary} />
+                  <Text style={[styles.featureText, { color: colors.textSecondary }]}>{feature.label}</Text>
+                </View>
+              ))}
+            </View>
           </View>
         </LinearGradient>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Partner login</Text>
-          <Text style={styles.label}>Mobile number</Text>
+        <View
+          style={[
+            styles.card,
+            {
+              marginTop: -CARD_OVERLAP,
+              backgroundColor: colors.card,
+              borderColor: colors.borderSubtle,
+            },
+          ]}
+        >
+          <Text style={[styles.cardTitle, { color: colors.text }]}>Get started</Text>
+          <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
+            Enter your mobile number to receive a one-time password
+          </Text>
+
+          <Text style={[styles.label, { color: colors.text }]}>Mobile Number</Text>
           <PhoneNumberInput
             value={phone}
             onChangeText={(t) => {
@@ -94,22 +142,60 @@ export default function LoginScreen() {
             }}
             error={!!error}
           />
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          <Pressable style={styles.terms} onPress={() => setAccepted((v) => !v)}>
-            <View style={[styles.checkbox, accepted && styles.checkboxChecked]}>
-              {accepted ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+
+          {error ? (
+            <View style={styles.errorRow}>
+              <Ionicons name="alert-circle" size={16} color={colors.danger} />
+              <Text style={[styles.error, { color: colors.danger }]}>{error}</Text>
             </View>
-            <Text style={styles.termsText}>I agree to the Terms & Privacy Policy</Text>
-          </Pressable>
-          <Pressable onPress={handleContinue} disabled={loading || !isValid} style={styles.cta}>
-            <LinearGradient
-              colors={isValid ? [...gradients.primary] : ['#94A3B8', '#CBD5E1']}
-              style={styles.ctaGradient}
+          ) : (
+            <Text style={[styles.hint, { color: colors.textMuted }]}>We'll send a 6-digit verification code via SMS</Text>
+          )}
+
+          <Pressable
+            style={styles.terms}
+            onPress={() => {
+              setAccepted((prev) => !prev);
+              if (error) setError('');
+            }}
+          >
+            <View
+              style={[
+                styles.checkbox,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: accepted ? colors.primary : colors.surface,
+                },
+                accepted && { borderColor: colors.primary },
+              ]}
             >
-              <Text style={styles.ctaText}>{loading ? 'Sending OTP…' : 'Continue'}</Text>
-            </LinearGradient>
+              {accepted && <Ionicons name="checkmark" size={14} color={colors.white} />}
+            </View>
+            <Text style={[styles.termsText, { color: colors.textSecondary }]}>
+              I agree to the <Text style={[styles.link, { color: colors.primary }]}>Terms & Conditions</Text> and{' '}
+              <Text style={[styles.link, { color: colors.primary }]}>Privacy Policy</Text>
+            </Text>
           </Pressable>
-          <Text style={styles.mockHint}>Mock OTP: 123456</Text>
+
+          <Button
+            title={loading ? 'Sending OTP...' : 'Continue'}
+            onPress={handleContinue}
+            loading={loading}
+            disabled={!isValid}
+            fullWidth
+            leftIcon="arrow-forward"
+          />
+
+          {!isValid && !error && (
+            <Text style={[styles.ctaHint, { color: colors.textMuted }]}>
+              {phone.length < 10 ? 'Enter your 10-digit mobile number' : 'Accept terms to continue'}
+            </Text>
+          )}
+
+          <View style={styles.secureRow}>
+            <Ionicons name="lock-closed-outline" size={14} color={colors.textMuted} />
+            <Text style={[styles.secureText, { color: colors.textMuted }]}>Your number is encrypted and never shared</Text>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -117,54 +203,157 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
+  screen: { flex: 1 },
+  scroll: { flex: 1 },
   scrollContent: { flexGrow: 1 },
   hero: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxxl,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+    paddingBottom: CARD_OVERLAP + spacing.xxxl,
+    overflow: 'hidden',
+    borderBottomLeftRadius: radius.xl + 8,
+    borderBottomRightRadius: radius.xl + 8,
   },
-  heroTitle: { fontSize: 30, fontWeight: '800', color: '#fff', marginTop: spacing.lg },
-  heroSubtitle: { color: 'rgba(255,255,255,0.9)', marginTop: spacing.sm, lineHeight: 22 },
-  featureRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xl },
+  heroOrb1: {
+    position: 'absolute',
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    top: -60,
+    right: -40,
+    opacity: 0.7,
+  },
+  heroOrb2: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    bottom: 20,
+    left: -30,
+    opacity: 0.6,
+  },
+  heroContent: { zIndex: 1 },
+  logoWrap: { alignSelf: 'flex-start', marginBottom: spacing.lg, marginTop: spacing.md },
+  logo: {
+    width: 56,
+    height: 56,
+    borderRadius: radius.lg,
+    backgroundColor: themeColors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.md,
+  },
+  logoText: { fontSize: 28, fontWeight: '800', color: themeColors.primary },
+  logoBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: themeColors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.sm,
+  },
+  heroTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    marginBottom: spacing.sm,
+  },
+  heroSubtitle: {
+    fontSize: 16,
+    fontWeight: '400',
+    lineHeight: 24,
+    maxWidth: '90%',
+  },
+  featureRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.xl,
+  },
   featurePill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.15)',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  featureText: { color: '#fff', fontSize: 12 },
+  featureText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
   card: {
     marginHorizontal: spacing.lg,
-    marginTop: -24,
-    backgroundColor: colors.surface,
     borderRadius: radius.xl,
     padding: spacing.xl,
+    zIndex: 10,
     ...shadows.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    ...(Platform.OS === 'web' ? { position: 'relative' as const } : {}),
   },
-  cardTitle: { ...typography.h2, marginBottom: spacing.lg },
+  cardTitle: { ...typography.h2, marginBottom: spacing.xs },
+  cardSubtitle: { ...typography.bodySmall, marginBottom: spacing.xl, lineHeight: 20 },
   label: { ...typography.label, marginBottom: spacing.sm },
-  error: { ...typography.caption, color: colors.danger, marginBottom: spacing.sm },
-  terms: { flexDirection: 'row', gap: spacing.md, marginVertical: spacing.lg },
+  errorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.lg,
+  },
+  error: { ...typography.caption, flex: 1 },
+  hint: { ...typography.caption, marginBottom: spacing.lg },
+  terms: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    marginBottom: spacing.xl,
+    paddingVertical: spacing.xs,
+    cursor: Platform.OS === 'web' ? 'pointer' : undefined,
+  },
   checkbox: {
     width: 22,
     height: 22,
     borderRadius: 6,
     borderWidth: 2,
-    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 1,
   },
-  checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
-  termsText: { ...typography.bodySmall, color: colors.textSecondary, flex: 1 },
-  cta: { borderRadius: radius.lg, overflow: 'hidden' },
-  ctaGradient: { paddingVertical: spacing.lg, alignItems: 'center' },
-  ctaText: { ...typography.button, color: '#fff' },
-  mockHint: { ...typography.caption, color: colors.textMuted, textAlign: 'center', marginTop: spacing.md },
+  checkboxChecked: {},
+  termsText: { ...typography.bodySmall, flex: 1, lineHeight: 20 },
+  link: { fontWeight: '600' },
+  ctaWrap: {
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    ...shadows.md,
+    cursor: Platform.OS === 'web' ? 'pointer' : undefined,
+  },
+  ctaInactive: { opacity: 0.85 },
+  ctaPressed: { opacity: 0.92, transform: [{ scale: 0.99 }] },
+  ctaDisabled: { opacity: 0.7 },
+  ctaGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.xl,
+  },
+  ctaHint: {
+    ...typography.caption,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  secureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.lg,
+  },
+  secureText: { ...typography.caption },
 });

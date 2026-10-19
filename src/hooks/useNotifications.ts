@@ -3,18 +3,33 @@ import { Platform } from 'react-native';
 import { isRunningInExpoGo } from 'expo';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { deviceService } from '@/services/api';
 import type { DeliveryRequest } from '@/types';
 import { DELIVERY_REQUESTS_QUERY_KEY } from '@/hooks/useDeliveryRequestsQuery';
+import {
+  acceptDeliveryRequest,
+  rejectDeliveryRequest,
+  resolveAssignmentId,
+} from '@/utils/deliveryRequestActions';
 
 /** SDK 53+ Expo Go on Android throws when `expo-notifications` is loaded (remote push removed). */
 const isExpoGoAndroid = isRunningInExpoGo() && Platform.OS === 'android';
 
 type NotificationsModule = typeof import('expo-notifications');
 
+export const DELIVERY_REQUEST_CATEGORY = 'delivery_request';
+export const ACCEPT_DELIVERY_ACTION = 'accept_delivery';
+export const DECLINE_DELIVERY_ACTION = 'decline_delivery';
+
 const ALERT_DEDUPE_MS = 30_000;
 const recentAlertKeys = new Map<string, number>();
+
+export type DeliveryAlertData = {
+  assignmentId?: string;
+  subOrderId: string;
+  orderNumber?: string;
+};
 
 async function loadNotifications(): Promise<NotificationsModule | null> {
   if (isExpoGoAndroid) return null;
@@ -22,11 +37,30 @@ async function loadNotifications(): Promise<NotificationsModule | null> {
 }
 
 let notificationHandlerConfigured = false;
+let notificationCategoryConfigured = false;
+
+async function ensureNotificationCategory(Notifications: NotificationsModule) {
+  if (notificationCategoryConfigured) return;
+  await Notifications.setNotificationCategoryAsync(DELIVERY_REQUEST_CATEGORY, [
+    {
+      identifier: ACCEPT_DELIVERY_ACTION,
+      buttonTitle: 'Accept',
+      options: { opensAppToForeground: true },
+    },
+    {
+      identifier: DECLINE_DELIVERY_ACTION,
+      buttonTitle: 'Decline',
+      options: { opensAppToForeground: true, isDestructive: true },
+    },
+  ]);
+  notificationCategoryConfigured = true;
+}
 
 async function ensureNotificationHandler() {
   if (notificationHandlerConfigured || isExpoGoAndroid) return;
   const Notifications = await loadNotifications();
   if (!Notifications) return;
+  await ensureNotificationCategory(Notifications);
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
@@ -65,7 +99,8 @@ export function markDeliveryAlertShown(dedupeKey: string) {
 export async function scheduleLocalDeliveryAlert(
   title: string,
   body: string,
-  dedupeKey?: string
+  dedupeKey?: string,
+  alertData?: DeliveryAlertData
 ) {
   if (dedupeKey && shouldSkipDeliveryAlert(dedupeKey)) return;
   if (dedupeKey) markDeliveryAlertShown(dedupeKey);
@@ -73,15 +108,112 @@ export async function scheduleLocalDeliveryAlert(
   await ensureNotificationHandler();
   const Notifications = await loadNotifications();
   if (!Notifications) return;
+
+  const data: Record<string, string> = {
+    type: 'delivery_request',
+    subOrderId: alertData?.subOrderId ?? '',
+  };
+  if (alertData?.assignmentId) data.assignmentId = alertData.assignmentId;
+  if (alertData?.orderNumber) data.orderNumber = alertData.orderNumber;
+
   await Notifications.scheduleNotificationAsync({
     content: {
       title,
       body,
       sound: true,
+      categoryIdentifier: DELIVERY_REQUEST_CATEGORY,
+      data,
       ...(Platform.OS === 'android' ? { channelId: 'deliveries' } : {}),
     },
     trigger: null,
   });
+}
+
+function extractDeliveryData(data: Record<string, unknown> | undefined): {
+  type?: string;
+  subOrderId?: string;
+  assignmentId?: string;
+  orderNumber?: string;
+} {
+  if (!data) return {};
+  return {
+    type: typeof data.type === 'string' ? data.type : undefined,
+    subOrderId: typeof data.subOrderId === 'string' ? data.subOrderId : undefined,
+    assignmentId: typeof data.assignmentId === 'string' ? data.assignmentId : undefined,
+    orderNumber: typeof data.orderNumber === 'string' ? data.orderNumber : undefined,
+  };
+}
+
+type NotificationResponse = {
+  actionIdentifier: string;
+  notification: {
+    request: {
+      content: {
+        data?: Record<string, unknown>;
+      };
+    };
+  };
+};
+
+export async function resolveAndHandleDeliveryAction(
+  response: NotificationResponse,
+  queryClient: QueryClient
+): Promise<void> {
+  const Notifications = await loadNotifications();
+  const defaultAction =
+    Notifications?.DEFAULT_ACTION_IDENTIFIER ?? 'expo.modules.notifications.actions.DEFAULT';
+
+  const content = response.notification.request.content;
+  const { type, subOrderId, assignmentId } = extractDeliveryData(content.data);
+  if (type !== 'delivery_request') return;
+
+  const actionId = response.actionIdentifier;
+
+  await queryClient.invalidateQueries({ queryKey: [DELIVERY_REQUESTS_QUERY_KEY] });
+
+  if (actionId === defaultAction) {
+    router.push('/(app)/(tabs)/requests');
+    return;
+  }
+
+  if (actionId !== ACCEPT_DELIVERY_ACTION && actionId !== DECLINE_DELIVERY_ACTION) {
+    router.push('/(app)/(tabs)/requests');
+    return;
+  }
+
+  const resolvedId = await resolveAssignmentId(assignmentId, subOrderId);
+  if (!resolvedId) {
+    router.push('/(app)/(tabs)/requests');
+    return;
+  }
+
+  try {
+    if (actionId === ACCEPT_DELIVERY_ACTION) {
+      await acceptDeliveryRequest(resolvedId, queryClient);
+    } else {
+      await rejectDeliveryRequest(resolvedId, queryClient);
+    }
+  } catch {
+    router.push('/(app)/(tabs)/requests');
+  }
+}
+
+/** Handle notification tap/action after cold start (app was killed). */
+export async function processLastNotificationResponse(queryClient: QueryClient): Promise<void> {
+  if (isExpoGoAndroid) return;
+  await ensureNotificationHandler();
+  const Notifications = await loadNotifications();
+  if (!Notifications) return;
+
+  const response = await Notifications.getLastNotificationResponseAsync();
+  if (!response) return;
+
+  const { type } = extractDeliveryData(
+    response.notification.request.content.data as Record<string, unknown> | undefined
+  );
+  if (type !== 'delivery_request') return;
+
+  await resolveAndHandleDeliveryAction(response, queryClient);
 }
 
 export function usePushNotifications(enabled: boolean) {
@@ -114,9 +246,7 @@ export function usePushNotifications(enabled: boolean) {
 
       const projectId = resolveExpoProjectId();
       const token = (
-        await Notifications.getExpoPushTokenAsync(
-          projectId ? { projectId } : undefined
-        )
+        await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined)
       ).data;
       if (!registered.current) {
         await deviceService.registerPushToken(token);
@@ -155,22 +285,17 @@ export function useDeliveryRequestNotifications(
         void scheduleLocalDeliveryAlert(
           'Naya pickup request',
           `Order ${request.orderNumber} · ${request.pickupAddress}`,
-          dedupeKey
+          dedupeKey,
+          {
+            assignmentId: request.id,
+            subOrderId: request.orderId,
+            orderNumber: request.orderNumber,
+          }
         );
       }
     }
     seenIds.current = currentIds;
   }, [requests, enabled]);
-}
-
-function extractDeliveryData(
-  data: Record<string, unknown> | undefined
-): { type?: string; subOrderId?: string } {
-  if (!data) return {};
-  return {
-    type: typeof data.type === 'string' ? data.type : undefined,
-    subOrderId: typeof data.subOrderId === 'string' ? data.subOrderId : undefined,
-  };
 }
 
 export function useDeliveryNotificationListeners(enabled: boolean) {
@@ -198,9 +323,8 @@ export function useDeliveryNotificationListeners(enabled: boolean) {
         void queryClient.invalidateQueries({ queryKey: [DELIVERY_REQUESTS_QUERY_KEY] });
       });
 
-      responseSub = Notifications.addNotificationResponseReceivedListener(() => {
-        void queryClient.invalidateQueries({ queryKey: [DELIVERY_REQUESTS_QUERY_KEY] });
-        router.push('/(app)/(tabs)/requests');
+      responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+        void resolveAndHandleDeliveryAction(response, queryClient);
       });
     }
 

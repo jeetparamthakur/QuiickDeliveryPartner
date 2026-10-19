@@ -1,6 +1,7 @@
 import { View, StyleSheet, Animated, Easing } from 'react-native';
 import { useEffect, useRef } from 'react';
-import { colors, radius, spacing } from '@/theme';
+import { radius, spacing } from '@/theme';
+import { useTheme } from '@/context/ThemeContext';
 
 type Props = {
   width?: number | `${number}%`;
@@ -10,6 +11,7 @@ type Props = {
 };
 
 export function Skeleton({ width = '100%', height = 16, borderRadius = radius.sm, style }: Props) {
+  const { colors } = useTheme();
   const opacity = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -17,7 +19,7 @@ export function Skeleton({ width = '100%', height = 16, borderRadius = radius.sm
       Animated.sequence([
         Animated.timing(opacity, { toValue: 1, duration: 800, easing: Easing.ease, useNativeDriver: true }),
         Animated.timing(opacity, { toValue: 0.3, duration: 800, easing: Easing.ease, useNativeDriver: true }),
-      ])
+      ]),
     );
     anim.start();
     return () => anim.stop();
@@ -26,7 +28,7 @@ export function Skeleton({ width = '100%', height = 16, borderRadius = radius.sm
   return (
     <Animated.View
       style={[
-        { width, height, borderRadius, backgroundColor: colors.border, opacity },
+        { width, height, borderRadius, backgroundColor: colors.skeleton, opacity },
         style,
       ]}
     />
@@ -34,10 +36,12 @@ export function Skeleton({ width = '100%', height = 16, borderRadius = radius.sm
 }
 
 export function SkeletonCard() {
+  const { colors } = useTheme();
+
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { backgroundColor: colors.surface, borderRadius: radius.lg, marginBottom: spacing.md }]}>
       <Skeleton height={120} borderRadius={radius.md} />
-      <View style={styles.content}>
+      <View style={{ padding: spacing.lg }}>
         <Skeleton width="70%" height={18} />
         <Skeleton width="40%" height={14} style={{ marginTop: spacing.sm }} />
       </View>
@@ -47,10 +51,6 @@ export function SkeletonCard() {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
     overflow: 'hidden',
-    marginBottom: spacing.md,
   },
-  content: { padding: spacing.lg },
 });

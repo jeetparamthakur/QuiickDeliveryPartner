@@ -1,10 +1,12 @@
 import { useCallback } from 'react';
-import { View, Text, StyleSheet, Switch, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, Switch, Alert } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ScreenWrapper } from '@/components/layout/ScreenWrapper';
 import { EarningsCard } from '@/components/cards/EarningsCard';
+import { Card } from '@/components/ui/Card';
+import { useTheme } from '@/context/ThemeContext';
 import { usePartnerStore } from '@/stores/partnerStore';
 import { usePartnerSessionStore } from '@/stores/partnerSessionStore';
 import {
@@ -15,13 +17,26 @@ import {
 } from '@/services/api';
 import { usePartnerLocationTracking } from '@/hooks/usePartnerLocation';
 import { TRIP_STEP_LABELS } from '@/types';
-import { formatCurrency, getGreeting } from '@/utils/format';
-import { colors, radius, spacing, typography, shadows } from '@/theme';
+import { formatCurrency, formatDuration, formatShiftTime, getGreeting } from '@/utils/format';
+import { useShiftClock } from '@/hooks/useShiftClock';
+import { spacing } from '@/theme';
+import { PressableScale } from '@/components/ui/PressableScale';
 
 export default function HomeScreen() {
+  const { colors, typography, radius, shadows, fontFamily } = useTheme();
   const profile = usePartnerStore((s) => s.profile);
+  const queryClient = useQueryClient();
   const isOnline = usePartnerSessionStore((s) => s.isOnline);
-  const setOnline = usePartnerSessionStore((s) => s.setOnline);
+  const currentShiftStartedAt = usePartnerSessionStore((s) => s.currentShiftStartedAt);
+  const todayOnlineMinutes = usePartnerSessionStore((s) => s.todayOnlineMinutes);
+  const onlineMetricsSyncedAt = usePartnerSessionStore((s) => s.onlineMetricsSyncedAt);
+  const applyOnlineStatus = usePartnerSessionStore((s) => s.applyOnlineStatus);
+  const { elapsedMinutes, todayTotalMinutes } = useShiftClock(
+    isOnline,
+    currentShiftStartedAt,
+    todayOnlineMinutes,
+    onlineMetricsSyncedAt,
+  );
   const latitude = usePartnerSessionStore((s) => s.latitude);
   const longitude = usePartnerSessionStore((s) => s.longitude);
   const canGoOnline = profile?.canGoOnline ?? false;
@@ -33,10 +48,14 @@ export default function HomeScreen() {
       deliveryPartnerService
         .getSession()
         .then((session) => {
-          setOnline(session.isOnline);
+          applyOnlineStatus({
+            isOnline: session.isOnline,
+            currentShiftStartedAt: session.currentShiftStartedAt ?? null,
+            todayOnlineMinutes: session.todayOnlineMinutes ?? 0,
+          });
         })
         .catch(() => undefined);
-    }, [setOnline])
+    }, [applyOnlineStatus]),
   );
 
   const earningsQuery = useQuery({
@@ -50,11 +69,18 @@ export default function HomeScreen() {
     refetchInterval: isOnline ? 8000 : false,
   });
 
+  const activeRunQuery = useQuery({
+    queryKey: ['active-run'],
+    queryFn: () => deliveryService.getActiveRun(),
+    refetchInterval: isOnline ? 8000 : false,
+  });
+
   useFocusEffect(
     useCallback(() => {
       activeTripQuery.refetch();
+      activeRunQuery.refetch();
       earningsQuery.refetch();
-    }, [])
+    }, []),
   );
 
   async function toggleOnline(value: boolean) {
@@ -63,8 +89,11 @@ export default function HomeScreen() {
       return;
     }
     try {
-      await partnerSessionService.setOnline(value);
-      setOnline(value);
+      const status = await partnerSessionService.setOnline(value);
+      applyOnlineStatus(status);
+      if (!value) {
+        queryClient.invalidateQueries({ queryKey: ['shifts'] });
+      }
       if (value && latitude != null && longitude != null) {
         await partnerSessionService.updateLocation(latitude, longitude);
       }
@@ -74,27 +103,55 @@ export default function HomeScreen() {
   }
 
   const trip = activeTripQuery.data;
+  const run = activeRunQuery.data;
+  const isMultiRun = (run?.orders.length ?? 0) > 1;
 
   return (
     <ScreenWrapper>
-      <View style={styles.content}>
-        <Text style={styles.greeting}>{getGreeting()}</Text>
-        <Text style={styles.name}>{profile?.name || 'Partner'}</Text>
-
-        <View style={styles.onlineCard}>
-          <View>
-            <Text style={styles.onlineTitle}>{isOnline ? 'You are online' : 'You are offline'}</Text>
-            <Text style={styles.onlineHint}>
-              {isOnline ? 'Receiving nearby delivery requests' : 'Go online to receive requests'}
-            </Text>
-          </View>
-          <Switch
-            value={isOnline}
-            onValueChange={toggleOnline}
-            trackColor={{ true: colors.primaryLight, false: colors.border }}
-            thumbColor={isOnline ? colors.primary : colors.surface}
-          />
+      <View style={[styles.content, { gap: spacing.lg }]}>
+        <View>
+          <Text style={[typography.body, { color: colors.textSecondary }]}>{getGreeting()}</Text>
+          <Text style={[typography.h1, { color: colors.text, marginTop: -spacing.sm, fontFamily: fontFamily.bold }]}>
+            {profile?.name || 'Partner'}
+          </Text>
         </View>
+
+        <Card
+          variant="elevated"
+          style={{
+            ...shadows.md,
+            ...(isOnline
+              ? {
+                  borderColor: colors.primary,
+                  borderWidth: 1,
+                  backgroundColor: colors.primaryLight,
+                }
+              : {}),
+          }}
+        >
+          <View style={styles.onlineRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={[typography.h3, { color: colors.text }]}>{isOnline ? 'You are online' : 'You are offline'}</Text>
+              <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 4 }]}>
+                {isOnline ? 'Receiving nearby delivery requests' : 'Go online to receive requests'}
+              </Text>
+              {isOnline && currentShiftStartedAt ? (
+                <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.xs }]}>
+                  Shift started {formatShiftTime(currentShiftStartedAt)} · {formatDuration(elapsedMinutes)} elapsed
+                </Text>
+              ) : null}
+              <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.xs }]}>
+                Today online: {formatDuration(todayTotalMinutes)}
+              </Text>
+            </View>
+            <Switch
+              value={isOnline}
+              onValueChange={toggleOnline}
+              trackColor={{ true: colors.primaryLight, false: colors.border }}
+              thumbColor={isOnline ? colors.primary : colors.surface}
+            />
+          </View>
+        </Card>
 
         <View style={styles.earningsRow}>
           <EarningsCard
@@ -107,22 +164,33 @@ export default function HomeScreen() {
         </View>
 
         {trip ? (
-          <TouchableOpacity
-            style={styles.tripCard}
-            onPress={() => router.push(`/(app)/trip/${trip.orderId}`)}
-          >
-            <View style={styles.tripHeader}>
-              <Text style={styles.tripTitle}>Active trip · {trip.orderNumber}</Text>
-              <Ionicons name="chevron-forward" size={18} color={colors.primary} />
-            </View>
-            <Text style={styles.tripStep}>{TRIP_STEP_LABELS[trip.step]}</Text>
-            <Text style={styles.tripFee}>{formatCurrency(trip.deliveryFee)} delivery fee</Text>
-          </TouchableOpacity>
+          <PressableScale onPress={() => router.push(`/(app)/trip/${trip.orderId}`)} haptic="selection">
+            <Card variant="outline" style={{ backgroundColor: colors.primaryLight, borderColor: colors.borderSubtle }}>
+              <View style={styles.tripHeader}>
+                <Text style={[typography.h3, { color: colors.primaryDark }]}>
+                  {isMultiRun
+                    ? `Active run · ${run?.orders.length} orders`
+                    : `Active trip · ${trip.orderNumber}`}
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+              </View>
+              <Text style={[typography.body, { textTransform: 'capitalize', marginTop: spacing.sm, color: colors.text }]}>
+                {TRIP_STEP_LABELS[run?.microStep ?? trip.step]}
+              </Text>
+              <Text style={[typography.bodySmall, { color: colors.textSecondary, marginTop: spacing.xs }]}>
+                {isMultiRun
+                  ? `${run?.stopsRemaining ?? 0} stops left · Total earn ${formatCurrency(run?.totalDeliveryFee ?? trip.deliveryFee)}`
+                  : `You earn ${formatCurrency(trip.deliveryFee)}`}
+              </Text>
+            </Card>
+          </PressableScale>
         ) : (
-          <View style={styles.emptyTrip}>
-            <Ionicons name="bicycle-outline" size={28} color={colors.textMuted} />
-            <Text style={styles.emptyText}>No active trip</Text>
-          </View>
+          <Card variant="outline">
+            <View style={{ alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm }}>
+              <Ionicons name="bicycle-outline" size={28} color={colors.textMuted} />
+              <Text style={[typography.body, { color: colors.textMuted }]}>No active trip</Text>
+            </View>
+          </Card>
         )}
       </View>
     </ScreenWrapper>
@@ -130,42 +198,8 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { padding: spacing.lg, gap: spacing.lg },
-  greeting: { ...typography.body, color: colors.textSecondary },
-  name: { ...typography.h1, marginTop: -spacing.sm },
+  content: { padding: spacing.lg },
+  onlineRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   earningsRow: { flexDirection: 'row' },
-  onlineCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surface,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.sm,
-  },
-  onlineTitle: { ...typography.h3 },
-  onlineHint: { ...typography.caption, color: colors.textSecondary, marginTop: 4 },
-  tripCard: {
-    backgroundColor: colors.primaryLight,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
   tripHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  tripTitle: { ...typography.h3, color: colors.primaryDark },
-  tripStep: { ...typography.body, textTransform: 'capitalize', marginTop: spacing.sm },
-  tripFee: { ...typography.bodySmall, color: colors.textSecondary, marginTop: spacing.xs },
-  emptyTrip: {
-    alignItems: 'center',
-    padding: spacing.xxxl,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: spacing.sm,
-  },
-  emptyText: { ...typography.body, color: colors.textMuted },
 });
